@@ -166,7 +166,7 @@ async function main(){
       s.fragmentShader
         .replace('void main() {', 'void main() {\n float sh = vS < 0.5 ? uShow.x : vS < 1.5 ? uShow.y : vS < 2.5 ? uShow.z : uShow.w;\n if (sh < 0.5) discard;')
         .replace('#include <dithering_fragment>',
-          '#include <dithering_fragment>\n if (uLine > 0.5) gl_FragColor.rgb = vT > 0.5 ? mix(gl_FragColor.rgb, vec3(0.42,0.52,0.90), 0.8) : gl_FragColor.rgb * 0.45;\n if (abs(vP-uSel) < 0.5) gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.784,0.945,0.208), 0.75);');
+          '#include <dithering_fragment>\n if (uLine > 0.5 && vT < 0.5 && vS > 0.5) discard; if (uLine > 0.5) gl_FragColor.rgb = vT > 0.5 ? mix(gl_FragColor.rgb, vec3(0.42,0.52,0.90), 0.8) : gl_FragColor.rgb * 0.55;\n if (abs(vP-uSel) < 0.5) gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.784,0.945,0.208), 0.75);');
   };
   linesEl.onchange = () => {
     const k = linesEl.value;
@@ -176,7 +176,7 @@ async function main(){
     if (k) for (let i=0;i<parts.length;i++) if (inLine(k, parts[i])) { tint.fill(255, vstart[i], vstart[i]+parts[i].vertexCount); n++; }
     tintAttr.needsUpdate = true;
     uSel.value = -1;
-    pickEl.textContent = k ? `${k} · ${n} structures highlighted` : 'tap a structure';
+    pickEl.textContent = k ? `${k} · ${n} structures, shown over the skeleton` : 'tap a structure';
   };
   for (const b of document.querySelectorAll('#layers button')) {
     b.onclick = () => {
@@ -254,7 +254,9 @@ async function main(){
     const t = performance.now();
     ray.setFromCamera(new THREE.Vector2(x/innerWidth*2-1, -(y/innerHeight)*2+1), cam);
     const cand = [];
-    for (let i=0;i<parts.length;i++) if (show[SLOT[parts[i].system]] && ray.ray.intersectsBox(boxes[i])) cand.push(i);
+    // With a line selected only its members and the bones are drawn, so only those can be hit.
+    const lineK = linesEl.value;
+    for (let i=0;i<parts.length;i++) if (show[SLOT[parts[i].system]] && (!lineK || SLOT[parts[i].system] === 0 || inLine(lineK, parts[i])) && ray.ray.intersectsBox(boxes[i])) cand.push(i);
     let best = null;
     for (const i of cand){
       g.setDrawRange(ranges[i]*3, parts[i].indexCount);
