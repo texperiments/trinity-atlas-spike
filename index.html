@@ -11,38 +11,47 @@
   #hud{position:fixed;left:10px;top:10px;right:10px;font-size:12px;line-height:1.5;
     background:rgba(11,12,14,.82);border:1px solid #22252A;border-radius:10px;padding:9px 11px;
     white-space:pre-wrap;pointer-events:none}
-  #pick{position:fixed;left:10px;right:10px;bottom:10px;background:rgba(11,12,14,.9);
-    border:1px solid #22252A;border-radius:10px;padding:10px 12px;font-size:13px}
+  #bottom{position:fixed;left:10px;right:10px;bottom:0;display:flex;flex-direction:column;gap:6px;
+    padding-bottom:calc(6px + env(safe-area-inset-bottom))}
+  #pick{background:rgba(11,12,14,.9);border:1px solid #22252A;border-radius:10px;padding:10px 12px;font-size:13px}
   b{color:#C8F135;font-weight:600}
-  #sets{position:fixed;left:10px;right:10px;bottom:64px;display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
-  #sets button{background:rgba(11,12,14,.9);color:#E9EAEC;border:1px solid #22252A;border-radius:999px;padding:7px 12px;font:inherit;font-size:12px}
+  .row{display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
+  .row button{background:rgba(11,12,14,.9);color:#E9EAEC;border:1px solid #22252A;border-radius:999px;padding:7px 12px;font:inherit;font-size:12px}
   #sets button.on{background:#C8F135;color:#0B0C0E;border-color:#C8F135}
-  #credit{position:fixed;left:10px;right:10px;bottom:0;padding:4px 12px 6px;font-size:10px;color:#8A8F98;text-align:center}
+  #layers button{color:#8A8F98;text-decoration:line-through}
+  #layers button.on{color:#E9EAEC;text-decoration:none;border-color:#5A5F68}
+  #credit{padding:0 12px;font-size:10px;color:#8A8F98;text-align:center}
   #credit a{color:#8A8F98}
-  #pick{bottom:26px}
 </style>
 </head>
 <body>
 <div id="hud">loading three.js…</div>
-<div id="sets">
-  <button data-atlas="">BodyParts3D</button><button data-atlas="za">Z-Anatomy</button><button data-atlas="za-lite">Z-Anatomy lite</button><button id="fasciaBtn">fascia</button>
+<div id="bottom">
+<div id="sets" class="row">
+  <button data-atlas="">BodyParts3D</button><button data-atlas="za">Z-Anatomy</button><button data-atlas="za-lite">Z-Anatomy lite</button>
+</div>
+<div id="layers" class="row">
+  <button data-layer="0" class="on">Bones</button><button data-layer="1" class="on">Muscles</button><button data-layer="2" class="on">Joints &amp; ligaments</button><button data-layer="3">Fascia</button>
 </div>
 <div id="pick">tap a structure</div>
 <div id="credit">Anatomy: <a href="https://github.com/Z-Anatomy" target="_blank">Z-Anatomy</a> (CC BY-SA 4.0), derived from <a href="https://dbarchive.biosciencedbc.jp/en/bodyparts3d/" target="_blank">BodyParts3D</a> (The Database Center for Life Science, CC BY 4.0). Adapted for the Trinity atlas spike.</div>
+</div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.152.2/three.min.js"></script>
 <script>
 // ?atlas=za loads the Z-Anatomy export (export-zanatomy.py); the default is the BodyParts3D set.
 const Q = new URLSearchParams(location.search);
 const BASE = Q.get('atlas') ? Q.get('atlas').replace(/\/?$/,'/') : '';
-// The fascial layer wraps the muscles like a skin, so it is off unless ?fascia=1 asks for it.
-const KEEP = new Set(['muscular','skeletal','connective','articular', ...(Q.get('fascia') ? ['fascial'] : [])]);
+// Every system loads; layers are shown or hidden in the shader. Slot 2 holds the joints: ligaments,
+// cartilage, menisci, discs, capsules and bursae in Z-Anatomy, the few tendons BodyParts3D has.
+const SLOT = { skeletal:0, muscular:1, articular:2, connective:2, fascial:3 };
+const KEEP = new Set(Object.keys(SLOT));
+const show = [1,1,1,0]; // fascia wraps the muscles like a skin, so it starts hidden
 // Switching sets reloads the page: the buffers are rebuilt from scratch either way.
 for (const b of document.querySelectorAll('#sets [data-atlas]')) {
   b.classList.toggle('on', (Q.get('atlas') || '') === b.dataset.atlas);
-  b.onclick = () => { const q = new URLSearchParams(location.search); if (b.dataset.atlas) q.set('atlas', b.dataset.atlas); else { q.delete('atlas'); q.delete('fascia'); } location.search = q.toString(); };
+  b.onclick = () => { const q = new URLSearchParams(location.search); if (b.dataset.atlas) q.set('atlas', b.dataset.atlas); else q.delete('atlas'); location.search = q.toString(); };
 }
-{ const f = document.getElementById('fasciaBtn'); f.hidden = !Q.get('atlas'); f.classList.toggle('on', !!Q.get('fascia'));
-  f.onclick = () => { const q = new URLSearchParams(location.search); if (Q.get('fascia')) q.delete('fascia'); else q.set('fascia', '1'); location.search = q.toString(); }; }
+
 const hud = document.getElementById('hud');
 const pickEl = document.getElementById('pick');
 const log = [];
@@ -72,8 +81,8 @@ async function main(){
   let nv = 0, ni = 0;
   for (const p of parts) { nv += p.vertexCount; ni += p.indexCount; }
   const pos = new Float32Array(nv*3), nor = new Int16Array(nv*3),
-        idx = new Uint32Array(ni), pid = new Float32Array(nv);
-  const bytes = pos.byteLength + nor.byteLength + idx.byteLength + pid.byteLength;
+        idx = new Uint32Array(ni), pid = new Float32Array(nv), sid = new Float32Array(nv);
+  const bytes = pos.byteLength + nor.byteLength + idx.byteLength + pid.byteLength + sid.byteLength;
   say(`parts ${parts.length} · verts ${nv.toLocaleString()} · tris ${(ni/3).toLocaleString()} · buffers ${mb(bytes)}`);
 
   const byChunk = new Map();
@@ -94,6 +103,7 @@ async function main(){
       const src = new Uint32Array(buf, p.indices, p.indexCount);
       for (let k=0;k<p.indexCount;k++) idx[io+k] = src[k] + vo;
       pid.fill(i, vo, vo+p.vertexCount);
+      sid.fill(SLOT[p.system], vo, vo+p.vertexCount);
       ranges[i] = io/3;
       vo += p.vertexCount; io += p.indexCount;
     }
@@ -109,19 +119,32 @@ async function main(){
   g.setAttribute('position', new THREE.BufferAttribute(pos,3));
   g.setAttribute('normal', new THREE.BufferAttribute(nor,3,true));
   g.setAttribute('partIndex', new THREE.BufferAttribute(pid,1));
+  g.setAttribute('sysSlot', new THREE.BufferAttribute(sid,1));
   g.setIndex(new THREE.BufferAttribute(idx,1));
   g.computeBoundingSphere();
 
   const mat = new THREE.MeshLambertMaterial({ color:0xC9BCB2, side:THREE.DoubleSide });
   const uSel = { value: -1 };
+  const uShow = { value: new THREE.Vector4(...show) };
   mat.onBeforeCompile = (s) => {
-    s.uniforms.uSel = uSel;
-    s.vertexShader = 'attribute float partIndex;\nvarying float vP;\n' +
-      s.vertexShader.replace('void main() {', 'void main() {\n vP = partIndex;');
-    s.fragmentShader = 'uniform float uSel;\nvarying float vP;\n' +
-      s.fragmentShader.replace('#include <dithering_fragment>',
-        '#include <dithering_fragment>\n if (abs(vP-uSel) < 0.5) gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.784,0.945,0.208), 0.75);');
+    s.uniforms.uSel = uSel; s.uniforms.uShow = uShow;
+    s.vertexShader = 'attribute float partIndex;\nattribute float sysSlot;\nvarying float vP;\nvarying float vS;\n' +
+      s.vertexShader.replace('void main() {', 'void main() {\n vP = partIndex; vS = sysSlot;');
+    s.fragmentShader = 'uniform float uSel;\nuniform vec4 uShow;\nvarying float vP;\nvarying float vS;\n' +
+      s.fragmentShader
+        .replace('void main() {', 'void main() {\n float sh = vS < 0.5 ? uShow.x : vS < 1.5 ? uShow.y : vS < 2.5 ? uShow.z : uShow.w;\n if (sh < 0.5) discard;')
+        .replace('#include <dithering_fragment>',
+          '#include <dithering_fragment>\n if (abs(vP-uSel) < 0.5) gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.784,0.945,0.208), 0.75);');
   };
+  for (const b of document.querySelectorAll('#layers button')) {
+    b.onclick = () => {
+      const k = +b.dataset.layer; show[k] = show[k] ? 0 : 1;
+      b.classList.toggle('on', !!show[k]);
+      uShow.value.set(...show);
+      if (uSel.value >= 0 && !show[SLOT[parts[uSel.value].system]]) { uSel.value = -1; pickEl.textContent = 'tap a structure'; }
+      hudLine();
+    };
+  }
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0B0C0E);
@@ -189,7 +212,7 @@ async function main(){
     const t = performance.now();
     ray.setFromCamera(new THREE.Vector2(x/innerWidth*2-1, -(y/innerHeight)*2+1), cam);
     const cand = [];
-    for (let i=0;i<parts.length;i++) if (ray.ray.intersectsBox(boxes[i])) cand.push(i);
+    for (let i=0;i<parts.length;i++) if (show[SLOT[parts[i].system]] && ray.ray.intersectsBox(boxes[i])) cand.push(i);
     let best = null;
     for (const i of cand){
       g.setDrawRange(ranges[i]*3, parts[i].indexCount);
@@ -218,7 +241,7 @@ async function main(){
   const info = renderer.info;
   function hudLine(){
     hud.textContent =
-      `${parts.length} parts · ${(ni/3/1000).toFixed(0)}k triangles · ${mb(bytes)} in buffers\n` +
+      `${parts.filter(p=>show[SLOT[p.system]]).length} of ${parts.length} parts shown · ${(ni/3/1000).toFixed(0)}k triangles · ${mb(bytes)} in buffers\n` +
       `${mb(downloaded)} decoded from ${chunks.length} chunks · ready in ${ready}s\n` +
       `${fps} fps · ${info.render.calls} draw call(s) · ${(devicePixelRatio||1).toFixed(1)}x dpr${heap()}`;
   }
