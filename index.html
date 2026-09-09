@@ -17,12 +17,21 @@
   #hud[hidden]{display:none}
   #bottom{position:fixed;left:10px;right:10px;bottom:0;display:flex;flex-direction:column;gap:6px;
     padding-bottom:calc(6px + env(safe-area-inset-bottom))}
-  #pick{background:rgba(11,12,14,.9);border:1px solid #22252A;border-radius:10px;padding:10px 12px;font-size:13px;
+  #pick{background:rgba(11,12,14,.92);border:1px solid #22252A;border-radius:12px;padding:11px 13px;font-size:13px;
     display:flex;align-items:center;gap:10px}
-  #pickText{flex:1;min-width:0}
-  #iso{flex:none;background:transparent;color:#E9EAEC;border:1px solid #22252A;border-radius:999px;padding:5px 11px;font:inherit;font-size:12px}
+  #pickBody{flex:1;min-width:0}
+  #pickName{font-size:15px;font-weight:600;color:#E9EAEC;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #pickName.idle{font-weight:400;color:#8A8F98}
+  #pickSub{margin-top:2px;font-size:12px;color:#8A8F98;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #pickSub[hidden]{display:none}
+  #pickActions{display:flex;gap:6px;flex:none}
+  #pickActions[hidden]{display:none}
+  #pickActions button{background:transparent;color:#E9EAEC;border:1px solid #2C3037;border-radius:999px;padding:7px 12px;font:inherit;font-size:12px}
   #iso.on{background:#C8F135;color:#0B0C0E;border-color:#C8F135}
-  #iso[hidden]{display:none}
+  #modelHint{display:flex;align-items:center;gap:10px;margin:4px 10px 8px;padding:9px 11px;border:1px dashed #2C3037;border-radius:10px;font-size:12px;color:#8A8F98}
+  #modelHint[hidden]{display:none}
+  #modelHint span{flex:1;min-width:0}
+  #modelHint button{background:transparent;color:#C8F135;border:1px solid #2C3037;border-radius:999px;padding:5px 11px;font:inherit;font-size:12px}
   b{color:#C8F135;font-weight:600}
   .row{display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
   .row button{background:rgba(11,12,14,.9);color:#E9EAEC;border:1px solid #22252A;border-radius:999px;padding:7px 12px;font:inherit;font-size:12px}
@@ -64,14 +73,18 @@
   <div id="panelHead"><span>Systems</span><button id="panelClose" title="close">✕</button></div>
   <div id="presets" class="row"><button data-preset="all">All</button><button data-preset="skeleton">Skeleton</button><button data-preset="organs">Organs</button></div>
   <div id="systemList"></div>
+  <div id="modelHint" hidden><span id="modelHintText"></span><button id="modelSwitch">Switch</button></div>
   <div id="panelFoot"><span id="visibleCount"></span><button id="hideAll">Hide all</button></div>
 </div>
 <div id="layers" class="row">
   <button id="panelBtn">☰ Systems</button>
-  <select id="sets"><option value="">BodyParts3D</option><option value="za">Z-Anatomy</option><option value="za-lite">Z-Anatomy lite</option></select>
+  <select id="sets"><option value="za">Model: joints, fascia &amp; muscles</option><option value="">Model: organs, vessels &amp; nerves</option><option value="za-lite">Model: joints &amp; fascia (light)</option></select>
   <select id="lines"><option value="">Myofascial lines…</option></select>
 </div>
-<div id="pick"><span id="pickText">tap a structure</span><button id="iso" hidden>Isolate</button></div>
+<div id="pick">
+  <div id="pickBody"><div id="pickName">Tap a structure</div><div id="pickSub" hidden></div></div>
+  <div id="pickActions" hidden><button id="iso">Isolate</button><button id="pickClear">Clear</button></div>
+</div>
 <div id="credit">Anatomy: <a href="https://github.com/Z-Anatomy" target="_blank">Z-Anatomy</a> (CC BY-SA 4.0), derived from <a href="https://dbarchive.biosciencedbc.jp/en/bodyparts3d/" target="_blank">BodyParts3D</a> (The Database Center for Life Science, CC BY 4.0). Adapted for the Trinity atlas spike.</div>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.152.2/three.min.js"></script>
@@ -145,26 +158,51 @@ const lineOf = (p) => Object.keys(LINES).filter(k => inLine(k, p));
 const linesEl = document.getElementById('lines');
 for (const k of Object.keys(LINES)) { const o = document.createElement('option'); o.value = k; o.textContent = k; linesEl.appendChild(o); }
 // Switching sets reloads the page: the buffers are rebuilt from scratch either way.
-const pickTextEl = document.getElementById('pickText');
+const pickNameEl = document.getElementById('pickName');
+const pickSubEl = document.getElementById('pickSub');
+const pickActionsEl = document.getElementById('pickActions');
 const isoEl = document.getElementById('iso');
 /**
- * The pick bar. `canIsolate` is true only when a real structure is named, because isolating
- * "nothing there" is not a thing to offer.
+ * The selection card. Toma could not find how to isolate a structure: the button was a small
+ * word at the end of a diagnostics line. Now a tap puts the name in large type with Isolate and
+ * Clear beside it, and the box counts and milliseconds live in the HUD where they belong.
  */
-function setPick(html, canIsolate) {
-  pickTextEl.innerHTML = html;
-  // While something is isolated the button stays, whatever the bar says: a tap on empty space is
-  // how you look around an isolated structure, and it must not throw the isolation away.
-  isoEl.hidden = !canIsolate && !isolating();
+function setPick(name, sub) {
+  if (!name) {
+    pickNameEl.textContent = isolating() ? pickNameEl.textContent : 'Tap a structure';
+    pickNameEl.classList.toggle('idle', !isolating());
+    if (!isolating()) { pickSubEl.hidden = true; pickActionsEl.hidden = true; }
+    return;
+  }
+  pickNameEl.textContent = name;
+  pickNameEl.classList.remove('idle');
+  pickSubEl.innerHTML = sub || '';
+  pickSubEl.hidden = !sub;
+  pickActionsEl.hidden = false;
 }
+document.getElementById('pickClear').onclick = () => {
+  clearIsolate();
+  if (typeof clearSelection === 'function') clearSelection();
+  pickNameEl.textContent = 'Tap a structure';
+  pickNameEl.classList.add('idle');
+  pickSubEl.hidden = true;
+  pickActionsEl.hidden = true;
+};
 let isoRef = null;                       // set once the uniform exists
+let clearSelection = null;               // set once the selection uniform exists
+let ghostSync = null;                    // set once the ghost mesh exists
 const isolating = () => !!isoRef && isoRef.value > -0.5;
 function clearIsolate() {
   if (isoRef) isoRef.value = -1;
+  if (ghostSync) ghostSync();
   isoEl.classList.remove('on');
   isoEl.textContent = 'Isolate';
 }
 
+// BodyParts3D has no joint structures at all: its 'connective' system is forty fibrous odds and
+// ends, retinacula and the linea alba mostly. Calling that 'Joints' promised what Z-Anatomy has
+// and this set does not (Toma, 2026-09-09), so on this set the slot says what it holds.
+const slotLabel = (i) => (SLOT_NAME[i] === 'Joints' && !SET ? 'Connective tissue' : SLOT_NAME[i]);
 const layersEl = document.getElementById('layers');
 const panelEl = document.getElementById('panel');
 const panelBtn = document.getElementById('panelBtn');
@@ -197,7 +235,7 @@ SLOT_NAME.forEach((name, i) => {
   // BodyParts3D has no joint structures at all: its 'connective' system is forty fibrous odds and
   // ends, retinacula and the linea alba mostly. Calling that 'Joints' promised what Z-Anatomy has
   // and this set does not (Toma, 2026-09-09), so on this set the layer says what it holds.
-  row.querySelector('.nm').textContent = name === 'Joints' && !SET ? 'Connective tissue' : name;
+  row.querySelector('.nm').textContent = slotLabel(SLOT_NAME.indexOf(name));
   systemListEl.appendChild(row);
 });
 
@@ -292,9 +330,11 @@ async function main(){
     if (uIso.value > -0.5) { clearIsolate(); return; }
     if (uSel.value < 0) return;
     uIso.value = uSel.value;
+    syncGhost();
     isoEl.classList.add('on');
-    isoEl.textContent = 'Show all';
+    isoEl.textContent = 'Show surroundings';
   };
+  clearSelection = () => { uSel.value = -1; };
   // Two vec4s rather than an array: a dynamically indexed array needs WebGL2, and the phone this
   // spike exists to measure is exactly where that assumption would break.
   // A uniform array read only at literal indices: a dynamically indexed one needs WebGL2, and a
@@ -330,7 +370,7 @@ async function main(){
     if (k) for (let i=0;i<parts.length;i++) if (inLine(k, parts[i])) { tint.fill(255, vstart[i], vstart[i]+parts[i].vertexCount); n++; }
     tintAttr.needsUpdate = true;
     uSel.value = -1;
-    setPick(k ? `${k} · ${n} structures, shown over the skeleton` : 'tap a structure');
+    if (k) setPick(k, n + ' structures, shown over the skeleton'); else setPick(null);
   };
   /**
    * The parts each system holds, counted once. The panel shows them because "Arteries 639" is the
@@ -345,15 +385,19 @@ async function main(){
       const k = +row.dataset.layer;
       row.classList.toggle('on', !!show[k]);
       row.querySelector('.ct').textContent = perSlot[k] || '';
+      // A system this model does not carry is not offered: a switch that shows nothing is a bug
+      // to whoever flips it (Toma turned on Heart and saw "0 pieces visible", 2026-09-09).
+      row.hidden = !perSlot[k];
     }
     // A preset is lit only while the layers still match it exactly.
     for (const b of document.querySelectorAll('#presets button')) {
       const want = PRESETS[b.dataset.preset]();
       b.classList.toggle('on', want.every((v, i) => !!v === !!show[i]));
     }
+    syncGhost();
     const shown = parts.filter(p => show[SLOT[p.system]]).length;
     visibleCountEl.textContent = shown + (shown === 1 ? ' piece visible' : ' pieces visible');
-    if (uSel.value >= 0 && !show[SLOT[parts[uSel.value].system]]) { uSel.value = -1; clearIsolate(); setPick('tap a structure'); }
+    if (uSel.value >= 0 && !show[SLOT[parts[uSel.value].system]]) { uSel.value = -1; clearIsolate(); setPick(null); }
     hudLine();
   }
 
@@ -365,14 +409,59 @@ async function main(){
   }
   document.getElementById('hideAll').onclick = () => { show.fill(0); applyLayers(); };
 
+  // What the other model has that this one does not, and the way there.
+  {
+    const hint = document.getElementById('modelHint');
+    const text = document.getElementById('modelHintText');
+    const sw = document.getElementById('modelSwitch');
+    if (SET) { text.textContent = 'Heart, arteries, veins, nerves and organs are in the other model.'; sw.onclick = () => { setsEl.value = ''; setsEl.onchange(); }; }
+    else { text.textContent = 'Joint ligaments, menisci, discs and fascia are in the other model.'; sw.onclick = () => { setsEl.value = 'za'; setsEl.onchange(); }; }
+    hint.hidden = false;
+  }
+
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0B0C0E);
   const mesh = new THREE.Mesh(g, mat);
   scene.add(mesh);
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x30343A, 0.9));
-  const key = new THREE.DirectionalLight(0xffffff, 0.8); key.position.set(1,2,3); scene.add(key);
 
-  const renderer = new THREE.WebGLRenderer({ antialias:false, powerPreference:'high-performance' });
+  /**
+   * The body surface as a ghost. The human-atlas viewer draws a faint skin around whatever is
+   * shown, and it is most of why theirs reads as a whole body when only muscles are on (Toma,
+   * 2026-09-09). Same vertices, only the skin parts' triangles, drawn after everything at low
+   * opacity without writing depth. It shows whenever the solid skin layer is off, and only the
+   * organs model has a skin to draw.
+   */
+  let ghost = null;
+  {
+    const skinSlot = SLOT.integumentary;
+    const skinParts = skinSlot === undefined ? [] : parts.map((p, i) => [p, i]).filter(([p]) => SLOT[p.system] === skinSlot);
+    if (skinParts.length) {
+      let n = 0; for (const [p] of skinParts) n += p.indexCount;
+      const sub = new Uint32Array(n); let o = 0;
+      for (const [p, i] of skinParts) { sub.set(idx.subarray(ranges[i]*3, ranges[i]*3 + p.indexCount), o); o += p.indexCount; }
+      const gg = new THREE.BufferGeometry();
+      gg.setAttribute('position', g.getAttribute('position'));
+      gg.setAttribute('normal', g.getAttribute('normal'));
+      gg.setIndex(new THREE.BufferAttribute(sub, 1));
+      const gm = new THREE.MeshLambertMaterial({ color: 0xD9CFC2, transparent: true, opacity: 0.13, depthWrite: false, side: THREE.FrontSide });
+      ghost = new THREE.Mesh(gg, gm);
+      ghost.renderOrder = 10;
+      scene.add(ghost);
+    }
+  }
+  const syncGhost = () => { if (ghost) ghost.visible = !show[SLOT.integumentary] && !isolating(); };
+  ghostSync = syncGhost;
+  // Three lights rather than one: a sky-and-ground fill, a key from front-above and a soft rim from
+  // behind, so a rib cage reads as round instead of flat. Tone mapping keeps the reds from clipping.
+  scene.add(new THREE.HemisphereLight(0xF2F4F8, 0x2A2D33, 0.75));
+  const key = new THREE.DirectionalLight(0xffffff, 0.9); key.position.set(1.2, 2.2, 3); scene.add(key);
+  const rim = new THREE.DirectionalLight(0xB9C4D6, 0.35); rim.position.set(-2, 1.5, -3); scene.add(rim);
+
+  const renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:'high-performance' });
+  if ('outputColorSpace' in renderer && THREE.SRGBColorSpace) renderer.outputColorSpace = THREE.SRGBColorSpace;
+  else if ('outputEncoding' in renderer && THREE.sRGBEncoding) renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.setSize(innerWidth, innerHeight);
   document.body.appendChild(renderer.domElement);
@@ -446,11 +535,15 @@ async function main(){
     }
     g.setDrawRange(0, Infinity);
     const ms = Math.round(performance.now()-t);
-    if (!best){ uSel.value = -1; setPick(`nothing there · ${cand.length} boxes · ${ms} ms`); return; }
+    lastPickStat = `${cand.length} boxes · ${ms} ms`;
+    if (!best){ if (!isolating()) uSel.value = -1; setPick(null); hudLine(); return; }
     const p = parts[best.i];
     uSel.value = best.i;
     const ln = lineOf(p);
-    setPick(`<b>${p.name}</b> · ${p.system}${ln.length ? ' · <span style="color:#8DA2F0">' + ln.join(', ') + '</span>' : ''} · ${p.id}${p.conceptId ? ' / '+p.conceptId : ''} · ${cand.length} boxes · ${ms} ms`, true);
+    const sysName = slotLabel(SLOT[p.system]) || p.system;
+    const side = p.side === 'l' ? 'left' : p.side === 'r' ? 'right' : '';
+    setPick(p.name, [sysName, side, ln.length ? '<span style="color:#8DA2F0">' + ln.join(', ') + '</span>' : ''].filter(Boolean).join(' · '));
+    hudLine();
   }
 
   // --- frame loop with a rolling fps read ---
@@ -465,11 +558,14 @@ async function main(){
 
   const heap = () => performance.memory ? ' · heap ' + mb(performance.memory.usedJSHeapSize) : '';
   const info = renderer.info;
+  let lastPickStat = '';
   function hudLine(){
     hud.textContent =
       `${parts.filter(p=>show[SLOT[p.system]]).length} of ${parts.length} parts shown · ${(ni/3/1000).toFixed(0)}k triangles · ${mb(bytes)} in buffers\n` +
       `${mb(downloaded)} decoded from ${chunks.length} chunks · ready in ${ready}s\n` +
-      `${fps} fps · ${info.render.calls} draw call(s) · ${(devicePixelRatio||1).toFixed(1)}x dpr${heap()}`;
+      `${fps} fps · ${info.render.calls} draw call(s) · ${(devicePixelRatio||1).toFixed(1)}x dpr${heap()}` +
+      (lastPickStat ? `
+last tap: ${lastPickStat}` : '');
   }
   window.__spike = { renderer, scene, cam, mesh, g, parts, ray, pick, place,
     get dist(){return dist}, set dist(v){dist=v; place();},
@@ -489,7 +585,7 @@ async function main(){
   const hudBtn = document.getElementById('hudBtn');
   hud.hidden = true; hudBtn.hidden = false;
   hudBtn.onclick = () => { hud.hidden = !hud.hidden; hudBtn.classList.toggle('on', !hud.hidden); };
-  setPick('tap a structure');
+  setPick(null);
 }
 main().catch(e => say('FAILED: ' + (e && e.message ? e.message : e)));
 </script>
