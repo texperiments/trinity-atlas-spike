@@ -17,7 +17,12 @@
   #hud[hidden]{display:none}
   #bottom{position:fixed;left:10px;right:10px;bottom:0;display:flex;flex-direction:column;gap:6px;
     padding-bottom:calc(6px + env(safe-area-inset-bottom))}
-  #pick{background:rgba(11,12,14,.9);border:1px solid #22252A;border-radius:10px;padding:10px 12px;font-size:13px}
+  #pick{background:rgba(11,12,14,.9);border:1px solid #22252A;border-radius:10px;padding:10px 12px;font-size:13px;
+    display:flex;align-items:center;gap:10px}
+  #pickText{flex:1;min-width:0}
+  #iso{flex:none;background:transparent;color:#E9EAEC;border:1px solid #22252A;border-radius:999px;padding:5px 11px;font:inherit;font-size:12px}
+  #iso.on{background:#C8F135;color:#0B0C0E;border-color:#C8F135}
+  #iso[hidden]{display:none}
   b{color:#C8F135;font-weight:600}
   .row{display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
   .row button{background:rgba(11,12,14,.9);color:#E9EAEC;border:1px solid #22252A;border-radius:999px;padding:7px 12px;font:inherit;font-size:12px}
@@ -35,11 +40,10 @@
 <button id="hudBtn" hidden title="diagnostics">i</button>
 <div id="bottom">
 <div id="layers" class="row">
-  <button data-layer="0" class="on">Bones</button><button data-layer="1" class="on">Muscles</button><button data-layer="2" class="on">Joints &amp; ligaments</button><button data-layer="3">Fascia</button><button data-layer="4">Arteries</button><button data-layer="5">Veins</button><button data-layer="6">Nerves</button><button data-layer="7">Organs</button><button data-layer="8">Skin</button>
   <select id="sets"><option value="">BodyParts3D</option><option value="za">Z-Anatomy</option><option value="za-lite">Z-Anatomy lite</option></select>
   <select id="lines"><option value="">Myofascial lines…</option></select>
 </div>
-<div id="pick">tap a structure</div>
+<div id="pick"><span id="pickText">tap a structure</span><button id="iso" hidden>Isolate</button></div>
 <div id="credit">Anatomy: <a href="https://github.com/Z-Anatomy" target="_blank">Z-Anatomy</a> (CC BY-SA 4.0), derived from <a href="https://dbarchive.biosciencedbc.jp/en/bodyparts3d/" target="_blank">BodyParts3D</a> (The Database Center for Life Science, CC BY 4.0). Adapted for the Trinity atlas spike.</div>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.152.2/three.min.js"></script>
@@ -53,26 +57,46 @@ const Q = new URLSearchParams(location.search);
  */
 const SET = Q.get('atlas') || '';
 const BASE = SET ? SET.replace(/\/?$/,'/') : '';
-// Every system loads; layers are shown or hidden in the shader. Slot 2 holds the joints: ligaments,
-// cartilage, menisci, discs, capsules and bursae in Z-Anatomy, the few tendons BodyParts3D has.
-// Eight layers. The first four are the musculoskeletal set the app ships; the last four are the
-// systems only BodyParts3D carries, which is why they appear on `/` and not on `/?atlas=za`
-// (Toma, 2026-09-09: Z-Anatomy's whole cardiovascular collection is 22 meshes, nearly all heart).
-const SLOT = {
-  skeletal:0, muscular:1, articular:2, connective:2, fascial:3,
-  arterial:4, venous:5, nervous:6, sensory:6,
-  respiratory:7, digestive:7, urinary:7, endocrine:7, reproductive:7, lymphatic:7, cardiac:7,
-  // Skin gets a layer to itself. Grouped under Organs it hid every one of them, which is precisely
-  // what a skin is for (Toma, on a phone, 2026-09-09).
-  integumentary:8,
-};
-// Anatomy reads wrong in one colour once vessels and nerves are on it: red arteries, blue veins,
-// yellow nerves is the convention every atlas uses, and the eye needs it to tell them apart.
-const SLOT_COLOR = ['#C9BCB2','#B06A5E','#D8CFC4','#E0D6C8','#C0392B','#2E5FA3','#D6B84A','#B9807A','#D9A38F'];
+/**
+ * One layer per anatomical system, named and coloured the way the human-atlas viewer does
+ * (Toma, 2026-09-09). The colours are theirs, read from their bundle: red arteries, blue veins,
+ * yellow nerves is the convention, and the rest of the palette is muted enough that fifteen
+ * systems on one body still read apart.
+ *
+ * Z-Anatomy's four systems map onto the same slots, so both data sets use one table: its
+ * `articular` is BodyParts3D's `connective`, and its `fascial` has no counterpart, so it borrows
+ * the connective colour.
+ */
+const SYSTEMS = [
+  { id: 'skeletal',      name: 'Skeleton',     color: '#E2D9BA', on: 1 },
+  { id: 'muscular',      name: 'Muscles',      color: '#A85B50', on: 1 },
+  { id: 'connective',    name: 'Joints',       color: '#AEC3BB', on: 1 },
+  { id: 'articular',     name: 'Joints',       color: '#AEC3BB', on: 1, alias: 'connective' },
+  { id: 'fascial',       name: 'Fascia',       color: '#C9BCB2', on: 0 },
+  { id: 'arterial',      name: 'Arteries',     color: '#C05245', on: 0 },
+  { id: 'venous',        name: 'Veins',        color: '#527C9F', on: 0 },
+  { id: 'cardiac',       name: 'Heart',        color: '#B96760', on: 0 },
+  { id: 'nervous',       name: 'Nerves',       color: '#D8B565', on: 0 },
+  { id: 'sensory',       name: 'Senses',       color: '#B0C8CE', on: 0 },
+  { id: 'respiratory',   name: 'Respiratory',  color: '#B98991', on: 0 },
+  { id: 'digestive',     name: 'Digestive',    color: '#B8916B', on: 0 },
+  { id: 'urinary',       name: 'Urinary',      color: '#B47961', on: 0 },
+  { id: 'lymphatic',     name: 'Lymphatic',    color: '#879F7C', on: 0 },
+  { id: 'endocrine',     name: 'Endocrine',    color: '#C5A09A', on: 0 },
+  { id: 'reproductive',  name: 'Reproductive', color: '#BDA098', on: 0 },
+  { id: 'integumentary', name: 'Body surface', color: '#BA9B7D', on: 0 },
+];
+// Slots are assigned per distinct layer; an alias shares its target's slot and button.
+const SLOT = {}, SLOT_COLOR = [], SLOT_NAME = [], show = [];
+for (const sysDef of SYSTEMS) {
+  if (sysDef.alias !== undefined) { SLOT[sysDef.id] = SLOT[sysDef.alias]; continue; }
+  SLOT[sysDef.id] = SLOT_COLOR.length;
+  SLOT_COLOR.push(sysDef.color); SLOT_NAME.push(sysDef.name); show.push(sysDef.on);
+}
+const SLOT_COUNT = SLOT_COLOR.length;
+
 const KEEP = new Set(Object.keys(SLOT));
-// Fascia wraps the muscles like a skin and starts hidden; the skin itself is a skin, and starts
-// hidden for the same reason.
-const show = [1,1,1,0,0,0,0,0,0];
+
 
 // Myofascial lines after Thomas Myers: each is a list of name patterns tested against the structure
 // name, so the same table serves Z-Anatomy (TA2 names) and BodyParts3D (FMA names). Sides are not
@@ -93,6 +117,38 @@ const lineOf = (p) => Object.keys(LINES).filter(k => inLine(k, p));
 const linesEl = document.getElementById('lines');
 for (const k of Object.keys(LINES)) { const o = document.createElement('option'); o.value = k; o.textContent = k; linesEl.appendChild(o); }
 // Switching sets reloads the page: the buffers are rebuilt from scratch either way.
+const pickTextEl = document.getElementById('pickText');
+const isoEl = document.getElementById('iso');
+/**
+ * The pick bar. `canIsolate` is true only when a real structure is named, because isolating
+ * "nothing there" is not a thing to offer.
+ */
+function setPick(html, canIsolate) {
+  pickTextEl.innerHTML = html;
+  // While something is isolated the button stays, whatever the bar says: a tap on empty space is
+  // how you look around an isolated structure, and it must not throw the isolation away.
+  isoEl.hidden = !canIsolate && !isolating();
+}
+let isoRef = null;                       // set once the uniform exists
+const isolating = () => !!isoRef && isoRef.value > -0.5;
+function clearIsolate() {
+  if (isoRef) isoRef.value = -1;
+  isoEl.classList.remove('on');
+  isoEl.textContent = 'Isolate';
+}
+
+const layersEl = document.getElementById('layers');
+SLOT_NAME.forEach((name, i) => {
+  const b = document.createElement('button');
+  b.dataset.layer = String(i);
+  b.textContent = name;
+  b.style.setProperty('--dot', SLOT_COLOR[i]);
+  if (show[i]) b.classList.add('on');
+  layersEl.insertBefore(b, layersEl.firstChild);
+});
+// Built in reverse above so the table's order survives insertBefore.
+[...layersEl.querySelectorAll('button')].reverse().forEach(b => layersEl.insertBefore(b, layersEl.querySelector('select')));
+
 const setsEl = document.getElementById('sets');
 setsEl.value = SET;
 setsEl.onchange = () => {
@@ -178,23 +234,39 @@ async function main(){
 
   const mat = new THREE.MeshLambertMaterial({ color:0xC9BCB2, side:THREE.DoubleSide });
   const uSel = { value: -1 };
+  const uIso = { value: -1 };   // >= 0 shows that one part and nothing else
+  isoRef = uIso;
+  isoEl.onclick = () => {
+    if (uIso.value > -0.5) { clearIsolate(); return; }
+    if (uSel.value < 0) return;
+    uIso.value = uSel.value;
+    isoEl.classList.add('on');
+    isoEl.textContent = 'Show all';
+  };
   // Two vec4s rather than an array: a dynamically indexed array needs WebGL2, and the phone this
   // spike exists to measure is exactly where that assumption would break.
-  const uShowA = { value: new THREE.Vector4(show[0], show[1], show[2], show[3]) };
-  const uShowB = { value: new THREE.Vector4(show[4], show[5], show[6], show[7]) };
-  const uShowC = { value: new THREE.Vector4(show[8], 0, 0, 0) };
+  // A uniform array read only at literal indices: a dynamically indexed one needs WebGL2, and a
+  // phone is exactly where that assumption breaks. The chain below is generated for that reason.
+  const uShow = { value: Float32Array.from(show) };
+  const slotChain = (expr) => {
+    let out = expr + '[' + (SLOT_COUNT - 1) + ']';
+    for (let i = SLOT_COUNT - 2; i >= 0; i--) out = 'vS < ' + (i + 0.5) + ' ? ' + expr + '[' + i + '] : ' + out;
+    return out;
+  };
   const uCol = { value: SLOT_COLOR.map(h => new THREE.Color(h)) };
   const uLine = { value: 0 };
   mat.onBeforeCompile = (s) => {
-    s.uniforms.uSel = uSel; s.uniforms.uShowA = uShowA; s.uniforms.uShowB = uShowB; s.uniforms.uShowC = uShowC; s.uniforms.uLine = uLine; s.uniforms.uCol = uCol;
+    s.uniforms.uSel = uSel; s.uniforms.uIso = uIso; s.uniforms.uShow = uShow; s.uniforms.uLine = uLine; s.uniforms.uCol = uCol;
     s.vertexShader = 'attribute float partIndex;\nattribute float sysSlot;\nattribute float lineTint;\nvarying float vP;\nvarying float vS;\nvarying float vT;\n' +
       s.vertexShader.replace('void main() {', 'void main() {\n vP = partIndex; vS = sysSlot; vT = lineTint;');
-    s.fragmentShader = 'uniform float uSel;\nuniform vec4 uShowA;\nuniform vec4 uShowB;\nuniform vec4 uShowC;\nuniform float uLine;\nuniform vec3 uCol[9];\nvarying float vP;\nvarying float vS;\nvarying float vT;\n' +
+    s.fragmentShader = 'uniform float uSel;\nuniform float uIso;\nuniform float uShow[' + SLOT_COUNT + '];\nuniform float uLine;\nuniform vec3 uCol[' + SLOT_COUNT + '];\nvarying float vP;\nvarying float vS;\nvarying float vT;\n' +
       s.fragmentShader
         .replace('void main() {',
-          'void main() {\n float sh = vS < 0.5 ? uShowA.x : vS < 1.5 ? uShowA.y : vS < 2.5 ? uShowA.z : vS < 3.5 ? uShowA.w : vS < 4.5 ? uShowB.x : vS < 5.5 ? uShowB.y : vS < 6.5 ? uShowB.z : vS < 7.5 ? uShowB.w : uShowC.x;\n if (sh < 0.5) discard;')
+          'void main() {\n float sh = ' + slotChain('uShow') + ';\n if (sh < 0.5) discard;\n' +
+          // One structure alone, when it is being inspected. Isolation beats every layer switch.
+          ' if (uIso > -0.5 && abs(vP - uIso) > 0.5) discard;')
         .replace('#include <color_fragment>',
-          '#include <color_fragment>\n diffuseColor.rgb = vS < 0.5 ? uCol[0] : vS < 1.5 ? uCol[1] : vS < 2.5 ? uCol[2] : vS < 3.5 ? uCol[3] : vS < 4.5 ? uCol[4] : vS < 5.5 ? uCol[5] : vS < 6.5 ? uCol[6] : vS < 7.5 ? uCol[7] : uCol[8];')
+          '#include <color_fragment>\n diffuseColor.rgb = ' + slotChain('uCol') + ';')
         .replace('#include <dithering_fragment>',
           '#include <dithering_fragment>\n if (uLine > 0.5 && vT < 0.5 && vS > 0.5) discard; if (uLine > 0.5) gl_FragColor.rgb = vT > 0.5 ? mix(gl_FragColor.rgb, vec3(0.42,0.52,0.90), 0.8) : gl_FragColor.rgb * 0.55;\n if (abs(vP-uSel) < 0.5) gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.784,0.945,0.208), 0.75);');
   };
@@ -206,16 +278,14 @@ async function main(){
     if (k) for (let i=0;i<parts.length;i++) if (inLine(k, parts[i])) { tint.fill(255, vstart[i], vstart[i]+parts[i].vertexCount); n++; }
     tintAttr.needsUpdate = true;
     uSel.value = -1;
-    pickEl.textContent = k ? `${k} · ${n} structures, shown over the skeleton` : 'tap a structure';
+    setPick(k ? `${k} · ${n} structures, shown over the skeleton` : 'tap a structure');
   };
   for (const b of document.querySelectorAll('#layers button')) {
     b.onclick = () => {
       const k = +b.dataset.layer; show[k] = show[k] ? 0 : 1;
       b.classList.toggle('on', !!show[k]);
-      uShowA.value.set(show[0], show[1], show[2], show[3]);
-      uShowB.value.set(show[4], show[5], show[6], show[7]);
-      uShowC.value.set(show[8], 0, 0, 0);
-      if (uSel.value >= 0 && !show[SLOT[parts[uSel.value].system]]) { uSel.value = -1; pickEl.textContent = 'tap a structure'; }
+      uShow.value.set(show);
+      if (uSel.value >= 0 && !show[SLOT[parts[uSel.value].system]]) { uSel.value = -1; setPick('tap a structure'); }
       hudLine();
     };
   }
@@ -288,7 +358,11 @@ async function main(){
     const cand = [];
     // With a line selected only its members and the bones are drawn, so only those can be hit.
     const lineK = linesEl.value;
-    for (let i=0;i<parts.length;i++) if (show[SLOT[parts[i].system]] && (!lineK || SLOT[parts[i].system] === 0 || inLine(lineK, parts[i])) && ray.ray.intersectsBox(boxes[i])) cand.push(i);
+    for (let i=0;i<parts.length;i++) {
+      if (uIso.value > -0.5) { if (i !== uIso.value) continue; }
+      else if (!show[SLOT[parts[i].system]] || (lineK && SLOT[parts[i].system] !== 0 && !inLine(lineK, parts[i]))) continue;
+      if (ray.ray.intersectsBox(boxes[i])) cand.push(i);
+    }
     let best = null;
     for (const i of cand){
       g.setDrawRange(ranges[i]*3, parts[i].indexCount);
@@ -297,11 +371,11 @@ async function main(){
     }
     g.setDrawRange(0, Infinity);
     const ms = Math.round(performance.now()-t);
-    if (!best){ uSel.value = -1; pickEl.textContent = `nothing there · ${cand.length} boxes · ${ms} ms`; return; }
+    if (!best){ uSel.value = -1; setPick(`nothing there · ${cand.length} boxes · ${ms} ms`); return; }
     const p = parts[best.i];
     uSel.value = best.i;
     const ln = lineOf(p);
-    pickEl.innerHTML = `<b>${p.name}</b> · ${p.system}${ln.length ? ' · <span style="color:#8DA2F0">' + ln.join(', ') + '</span>' : ''} · ${p.id}${p.conceptId ? ' / '+p.conceptId : ''} · ${cand.length} boxes · ${ms} ms`;
+    setPick(`<b>${p.name}</b> · ${p.system}${ln.length ? ' · <span style="color:#8DA2F0">' + ln.join(', ') + '</span>' : ''} · ${p.id}${p.conceptId ? ' / '+p.conceptId : ''} · ${cand.length} boxes · ${ms} ms`, true);
   }
 
   // --- frame loop with a rolling fps read ---
@@ -338,7 +412,7 @@ async function main(){
   const hudBtn = document.getElementById('hudBtn');
   hud.hidden = true; hudBtn.hidden = false;
   hudBtn.onclick = () => { hud.hidden = !hud.hidden; hudBtn.classList.toggle('on', !hud.hidden); };
-  pickEl.textContent = 'tap a structure';
+  setPick('tap a structure');
 }
 main().catch(e => say('FAILED: ' + (e && e.message ? e.message : e)));
 </script>
