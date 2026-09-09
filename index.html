@@ -27,8 +27,29 @@
   .row{display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
   .row button{background:rgba(11,12,14,.9);color:#E9EAEC;border:1px solid #22252A;border-radius:999px;padding:7px 12px;font:inherit;font-size:12px}
 
-  #layers button{color:#8A8F98;text-decoration:line-through}
-  #layers button.on{color:#E9EAEC;text-decoration:none;border-color:#5A5F68}
+  #panel{background:rgba(11,12,14,.96);border:1px solid #22252A;border-radius:12px;overflow:hidden;
+    display:flex;flex-direction:column;max-height:min(60vh,420px)}
+  #panel[hidden]{display:none}
+  #panelHead{display:flex;align-items:center;justify-content:space-between;padding:11px 13px;border-bottom:1px solid #22252A;font-size:13px}
+  #panelHead button,#panelFoot button{background:transparent;color:#8A8F98;border:0;font:inherit;font-size:13px;padding:2px 4px}
+  #presets{padding:9px 10px 4px}
+  #presets button{background:rgba(11,12,14,.9);color:#8A8F98;border:1px solid #22252A;border-radius:999px;padding:6px 14px;font:inherit;font-size:12px}
+  #presets button.on{background:#C8F135;color:#0B0C0E;border-color:#C8F135}
+  #systemList{overflow-y:auto;padding:4px 4px 6px}
+  .sysRow{display:flex;align-items:center;gap:10px;width:100%;background:transparent;border:0;color:#E9EAEC;
+    font:inherit;font-size:13px;padding:9px 10px;border-radius:8px;text-align:left}
+  .sysRow .dot{width:9px;height:9px;border-radius:50%;flex:none}
+  .sysRow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sysRow .ct{color:#8A8F98;font-variant-numeric:tabular-nums}
+  .sysRow .sw{width:34px;height:20px;border-radius:999px;background:#22252A;border:1px solid #2C3037;flex:none;position:relative}
+  .sysRow .sw::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#5A5F68}
+  .sysRow.on{color:#E9EAEC}
+  .sysRow.on .sw{background:#C8F135;border-color:#C8F135}
+  .sysRow.on .sw::after{left:auto;right:2px;background:#0B0C0E}
+  .sysRow:not(.on) .nm{color:#8A8F98}
+  #panelFoot{display:flex;align-items:center;justify-content:space-between;padding:9px 13px;border-top:1px solid #22252A;font-size:12px;color:#8A8F98}
+  #panelBtn{color:#E9EAEC}
+  #panelBtn.on{border-color:#5A5F68}
   #lines,#sets{background:rgba(11,12,14,.9);color:#E9EAEC;border:1px solid #22252A;border-radius:999px;padding:7px 12px;font:inherit;font-size:12px;-webkit-appearance:none;appearance:none}
   #lines.on{color:#8DA2F0;border-color:#8DA2F0}
   #credit{padding:0 12px;font-size:10px;color:#8A8F98;text-align:center}
@@ -39,7 +60,14 @@
 <div id="hud">loading three.js…</div>
 <button id="hudBtn" hidden title="diagnostics">i</button>
 <div id="bottom">
+<div id="panel" hidden>
+  <div id="panelHead"><span>Systems</span><button id="panelClose" title="close">✕</button></div>
+  <div id="presets" class="row"><button data-preset="all">All</button><button data-preset="skeleton">Skeleton</button><button data-preset="organs">Organs</button></div>
+  <div id="systemList"></div>
+  <div id="panelFoot"><span id="visibleCount"></span><button id="hideAll">Hide all</button></div>
+</div>
 <div id="layers" class="row">
+  <button id="panelBtn">☰ Systems</button>
   <select id="sets"><option value="">BodyParts3D</option><option value="za">Z-Anatomy</option><option value="za-lite">Z-Anatomy lite</option></select>
   <select id="lines"><option value="">Myofascial lines…</option></select>
 </div>
@@ -138,16 +166,37 @@ function clearIsolate() {
 }
 
 const layersEl = document.getElementById('layers');
+const panelEl = document.getElementById('panel');
+const panelBtn = document.getElementById('panelBtn');
+const systemListEl = document.getElementById('systemList');
+const visibleCountEl = document.getElementById('visibleCount');
+
+/**
+ * The systems live in a panel rather than a row of sixteen buttons, grouped by the three presets
+ * the human-atlas viewer uses (Toma, 2026-09-09). Sixteen buttons wrapped onto four lines on a
+ * phone and covered the model.
+ */
+const PRESETS = {
+  all: () => SLOT_NAME.map(() => 1),
+  skeleton: () => SLOT_NAME.map((_, i) => (['Skeleton', 'Joints'].includes(SLOT_NAME[i]) ? 1 : 0)),
+  organs: () => SLOT_NAME.map((_, i) => (['Heart', 'Senses', 'Respiratory', 'Digestive', 'Urinary', 'Lymphatic', 'Endocrine', 'Reproductive'].includes(SLOT_NAME[i]) ? 1 : 0)),
+};
+
+panelBtn.onclick = () => {
+  panelEl.hidden = !panelEl.hidden;
+  panelBtn.classList.toggle('on', !panelEl.hidden);
+};
+document.getElementById('panelClose').onclick = () => { panelEl.hidden = true; panelBtn.classList.remove('on'); };
+
 SLOT_NAME.forEach((name, i) => {
-  const b = document.createElement('button');
-  b.dataset.layer = String(i);
-  b.textContent = name;
-  b.style.setProperty('--dot', SLOT_COLOR[i]);
-  if (show[i]) b.classList.add('on');
-  layersEl.insertBefore(b, layersEl.firstChild);
+  const row = document.createElement('button');
+  row.className = 'sysRow';
+  row.dataset.layer = String(i);
+  row.innerHTML = '<span class="dot"></span><span class="nm"></span><span class="ct"></span><span class="sw"></span>';
+  row.querySelector('.dot').style.background = SLOT_COLOR[i];
+  row.querySelector('.nm').textContent = name;
+  systemListEl.appendChild(row);
 });
-// Built in reverse above so the table's order survives insertBefore.
-[...layersEl.querySelectorAll('button')].reverse().forEach(b => layersEl.insertBefore(b, layersEl.querySelector('select')));
 
 const setsEl = document.getElementById('sets');
 setsEl.value = SET;
@@ -280,15 +329,38 @@ async function main(){
     uSel.value = -1;
     setPick(k ? `${k} · ${n} structures, shown over the skeleton` : 'tap a structure');
   };
-  for (const b of document.querySelectorAll('#layers button')) {
-    b.onclick = () => {
-      const k = +b.dataset.layer; show[k] = show[k] ? 0 : 1;
-      b.classList.toggle('on', !!show[k]);
-      uShow.value.set(show);
-      if (uSel.value >= 0 && !show[SLOT[parts[uSel.value].system]]) { uSel.value = -1; setPick('tap a structure'); }
-      hudLine();
-    };
+  /**
+   * The parts each system holds, counted once. The panel shows them because "Arteries 639" is the
+   * quickest way to know whether a layer is worth switching on.
+   */
+  const perSlot = new Array(SLOT_COUNT).fill(0);
+  for (const p of parts) perSlot[SLOT[p.system]]++;
+
+  function applyLayers() {
+    uShow.value.set(show);
+    for (const row of systemListEl.querySelectorAll('.sysRow')) {
+      const k = +row.dataset.layer;
+      row.classList.toggle('on', !!show[k]);
+      row.querySelector('.ct').textContent = perSlot[k] || '';
+    }
+    // A preset is lit only while the layers still match it exactly.
+    for (const b of document.querySelectorAll('#presets button')) {
+      const want = PRESETS[b.dataset.preset]();
+      b.classList.toggle('on', want.every((v, i) => !!v === !!show[i]));
+    }
+    const shown = parts.filter(p => show[SLOT[p.system]]).length;
+    visibleCountEl.textContent = shown + (shown === 1 ? ' piece visible' : ' pieces visible');
+    if (uSel.value >= 0 && !show[SLOT[parts[uSel.value].system]]) { uSel.value = -1; clearIsolate(); setPick('tap a structure'); }
+    hudLine();
   }
+
+  for (const row of systemListEl.querySelectorAll('.sysRow')) {
+    row.onclick = () => { const k = +row.dataset.layer; show[k] = show[k] ? 0 : 1; applyLayers(); };
+  }
+  for (const b of document.querySelectorAll('#presets button')) {
+    b.onclick = () => { PRESETS[b.dataset.preset]().forEach((v, i) => { show[i] = v; }); applyLayers(); };
+  }
+  document.getElementById('hideAll').onclick = () => { show.fill(0); applyLayers(); };
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0B0C0E);
@@ -407,6 +479,8 @@ async function main(){
       return { ms: (performance.now()-t)/n, calls: renderer.info.render.calls };
     } };
   const ready = since().replace('s','');
+  // After `ready`, because the panel's first paint refreshes the HUD line, which reads it.
+  applyLayers();
   hudLine();
   // Loading progress has been on screen until now; from here the numbers live behind the i button.
   const hudBtn = document.getElementById('hudBtn');
