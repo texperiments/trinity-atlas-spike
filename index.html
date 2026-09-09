@@ -194,7 +194,10 @@ SLOT_NAME.forEach((name, i) => {
   row.dataset.layer = String(i);
   row.innerHTML = '<span class="dot"></span><span class="nm"></span><span class="ct"></span><span class="sw"></span>';
   row.querySelector('.dot').style.background = SLOT_COLOR[i];
-  row.querySelector('.nm').textContent = name;
+  // BodyParts3D has no joint structures at all: its 'connective' system is forty fibrous odds and
+  // ends, retinacula and the linea alba mostly. Calling that 'Joints' promised what Z-Anatomy has
+  // and this set does not (Toma, 2026-09-09), so on this set the layer says what it holds.
+  row.querySelector('.nm').textContent = name === 'Joints' && !SET ? 'Connective tissue' : name;
   systemListEl.appendChild(row);
 });
 
