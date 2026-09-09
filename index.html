@@ -38,7 +38,7 @@
   <button data-atlas="za">Z-Anatomy</button><button data-atlas="za-lite">Z-Anatomy lite</button><button data-atlas="">BodyParts3D</button>
 </div>
 <div id="layers" class="row">
-  <button data-layer="0" class="on">Bones</button><button data-layer="1" class="on">Muscles</button><button data-layer="2" class="on">Joints &amp; ligaments</button><button data-layer="3">Fascia</button>
+  <button data-layer="0" class="on">Bones</button><button data-layer="1" class="on">Muscles</button><button data-layer="2" class="on">Joints &amp; ligaments</button><button data-layer="3">Fascia</button><button data-layer="4">Arteries</button><button data-layer="5">Veins</button><button data-layer="6">Nerves</button><button data-layer="7">Organs</button>
   <select id="lines"><option value="">Myofascial lines…</option></select>
 </div>
 <div id="pick">tap a structure</div>
@@ -53,9 +53,19 @@ const SET = Q.has('atlas') ? Q.get('atlas') : 'za';
 const BASE = SET ? SET.replace(/\/?$/,'/') : '';
 // Every system loads; layers are shown or hidden in the shader. Slot 2 holds the joints: ligaments,
 // cartilage, menisci, discs, capsules and bursae in Z-Anatomy, the few tendons BodyParts3D has.
-const SLOT = { skeletal:0, muscular:1, articular:2, connective:2, fascial:3 };
+// Eight layers. The first four are the musculoskeletal set the app ships; the last four are the
+// systems only BodyParts3D carries, which is why they appear on `/` and not on `/?atlas=za`
+// (Toma, 2026-09-09: Z-Anatomy's whole cardiovascular collection is 22 meshes, nearly all heart).
+const SLOT = {
+  skeletal:0, muscular:1, articular:2, connective:2, fascial:3,
+  arterial:4, venous:5, nervous:6, sensory:6,
+  respiratory:7, digestive:7, urinary:7, endocrine:7, reproductive:7, lymphatic:7, cardiac:7, integumentary:7,
+};
+// Anatomy reads wrong in one colour once vessels and nerves are on it: red arteries, blue veins,
+// yellow nerves is the convention every atlas uses, and the eye needs it to tell them apart.
+const SLOT_COLOR = ['#C9BCB2','#B06A5E','#D8CFC4','#E0D6C8','#C0392B','#2E5FA3','#D6B84A','#B9807A'];
 const KEEP = new Set(Object.keys(SLOT));
-const show = [1,1,1,0]; // fascia wraps the muscles like a skin, so it starts hidden
+const show = [1,1,1,0,0,0,0,0]; // fascia wraps the muscles like a skin, so it starts hidden
 
 // Myofascial lines after Thomas Myers: each is a list of name patterns tested against the structure
 // name, so the same table serves Z-Anatomy (TA2 names) and BodyParts3D (FMA names). Sides are not
@@ -158,15 +168,22 @@ async function main(){
 
   const mat = new THREE.MeshLambertMaterial({ color:0xC9BCB2, side:THREE.DoubleSide });
   const uSel = { value: -1 };
-  const uShow = { value: new THREE.Vector4(...show) };
+  // Two vec4s rather than an array: a dynamically indexed array needs WebGL2, and the phone this
+  // spike exists to measure is exactly where that assumption would break.
+  const uShowA = { value: new THREE.Vector4(show[0], show[1], show[2], show[3]) };
+  const uShowB = { value: new THREE.Vector4(show[4], show[5], show[6], show[7]) };
+  const uCol = { value: SLOT_COLOR.map(h => new THREE.Color(h)) };
   const uLine = { value: 0 };
   mat.onBeforeCompile = (s) => {
-    s.uniforms.uSel = uSel; s.uniforms.uShow = uShow; s.uniforms.uLine = uLine;
+    s.uniforms.uSel = uSel; s.uniforms.uShowA = uShowA; s.uniforms.uShowB = uShowB; s.uniforms.uLine = uLine; s.uniforms.uCol = uCol;
     s.vertexShader = 'attribute float partIndex;\nattribute float sysSlot;\nattribute float lineTint;\nvarying float vP;\nvarying float vS;\nvarying float vT;\n' +
       s.vertexShader.replace('void main() {', 'void main() {\n vP = partIndex; vS = sysSlot; vT = lineTint;');
-    s.fragmentShader = 'uniform float uSel;\nuniform vec4 uShow;\nuniform float uLine;\nvarying float vP;\nvarying float vS;\nvarying float vT;\n' +
+    s.fragmentShader = 'uniform float uSel;\nuniform vec4 uShowA;\nuniform vec4 uShowB;\nuniform float uLine;\nuniform vec3 uCol[8];\nvarying float vP;\nvarying float vS;\nvarying float vT;\n' +
       s.fragmentShader
-        .replace('void main() {', 'void main() {\n float sh = vS < 0.5 ? uShow.x : vS < 1.5 ? uShow.y : vS < 2.5 ? uShow.z : uShow.w;\n if (sh < 0.5) discard;')
+        .replace('void main() {',
+          'void main() {\n float sh = vS < 0.5 ? uShowA.x : vS < 1.5 ? uShowA.y : vS < 2.5 ? uShowA.z : vS < 3.5 ? uShowA.w : vS < 4.5 ? uShowB.x : vS < 5.5 ? uShowB.y : vS < 6.5 ? uShowB.z : uShowB.w;\n if (sh < 0.5) discard;')
+        .replace('#include <color_fragment>',
+          '#include <color_fragment>\n diffuseColor.rgb = vS < 0.5 ? uCol[0] : vS < 1.5 ? uCol[1] : vS < 2.5 ? uCol[2] : vS < 3.5 ? uCol[3] : vS < 4.5 ? uCol[4] : vS < 5.5 ? uCol[5] : vS < 6.5 ? uCol[6] : uCol[7];')
         .replace('#include <dithering_fragment>',
           '#include <dithering_fragment>\n if (uLine > 0.5 && vT < 0.5 && vS > 0.5) discard; if (uLine > 0.5) gl_FragColor.rgb = vT > 0.5 ? mix(gl_FragColor.rgb, vec3(0.42,0.52,0.90), 0.8) : gl_FragColor.rgb * 0.55;\n if (abs(vP-uSel) < 0.5) gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.784,0.945,0.208), 0.75);');
   };
@@ -184,7 +201,8 @@ async function main(){
     b.onclick = () => {
       const k = +b.dataset.layer; show[k] = show[k] ? 0 : 1;
       b.classList.toggle('on', !!show[k]);
-      uShow.value.set(...show);
+      uShowA.value.set(show[0], show[1], show[2], show[3]);
+      uShowB.value.set(show[4], show[5], show[6], show[7]);
       if (uSel.value >= 0 && !show[SLOT[parts[uSel.value].system]]) { uSel.value = -1; pickEl.textContent = 'tap a structure'; }
       hudLine();
     };
