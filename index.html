@@ -21,10 +21,10 @@
   b{color:#C8F135;font-weight:600}
   .row{display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
   .row button{background:rgba(11,12,14,.9);color:#E9EAEC;border:1px solid #22252A;border-radius:999px;padding:7px 12px;font:inherit;font-size:12px}
-  #sets button.on{background:#C8F135;color:#0B0C0E;border-color:#C8F135}
+
   #layers button{color:#8A8F98;text-decoration:line-through}
   #layers button.on{color:#E9EAEC;text-decoration:none;border-color:#5A5F68}
-  #lines{background:rgba(11,12,14,.9);color:#E9EAEC;border:1px solid #22252A;border-radius:999px;padding:7px 12px;font:inherit;font-size:12px;-webkit-appearance:none;appearance:none}
+  #lines,#sets{background:rgba(11,12,14,.9);color:#E9EAEC;border:1px solid #22252A;border-radius:999px;padding:7px 12px;font:inherit;font-size:12px;-webkit-appearance:none;appearance:none}
   #lines.on{color:#8DA2F0;border-color:#8DA2F0}
   #credit{padding:0 12px;font-size:10px;color:#8A8F98;text-align:center}
   #credit a{color:#8A8F98}
@@ -34,11 +34,9 @@
 <div id="hud">loading three.js…</div>
 <button id="hudBtn" hidden title="diagnostics">i</button>
 <div id="bottom">
-<div id="sets" class="row">
-  <button data-atlas="za">Z-Anatomy</button><button data-atlas="za-lite">Z-Anatomy lite</button><button data-atlas="">BodyParts3D</button>
-</div>
 <div id="layers" class="row">
   <button data-layer="0" class="on">Bones</button><button data-layer="1" class="on">Muscles</button><button data-layer="2" class="on">Joints &amp; ligaments</button><button data-layer="3">Fascia</button><button data-layer="4">Arteries</button><button data-layer="5">Veins</button><button data-layer="6">Nerves</button><button data-layer="7">Organs</button><button data-layer="8">Skin</button>
+  <select id="sets"><option value="">BodyParts3D</option><option value="za">Z-Anatomy</option><option value="za-lite">Z-Anatomy lite</option></select>
   <select id="lines"><option value="">Myofascial lines…</option></select>
 </div>
 <div id="pick">tap a structure</div>
@@ -46,10 +44,14 @@
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.152.2/three.min.js"></script>
 <script>
-// ?atlas=za loads the Z-Anatomy export (export-zanatomy.py); the default is the BodyParts3D set.
 const Q = new URLSearchParams(location.search);
-// Z-Anatomy is the set the app ships; BodyParts3D stays reachable as the measurement baseline.
-const SET = Q.has('atlas') ? Q.get('atlas') : 'za';
+/**
+ * BodyParts3D is what the bare URL loads (Toma, 2026-09-09: typing ?atlas= to reach it was the
+ * fiddliest part of using this). It is the fuller set — vessels, nerves, organs — and the one
+ * worth opening on. Z-Anatomy is still the set the app ships, and is one menu pick away at
+ * ?atlas=za; it stays the reference for ligaments, menisci and discs, which BodyParts3D lacks.
+ */
+const SET = Q.get('atlas') || '';
 const BASE = SET ? SET.replace(/\/?$/,'/') : '';
 // Every system loads; layers are shown or hidden in the shader. Slot 2 holds the joints: ligaments,
 // cartilage, menisci, discs, capsules and bursae in Z-Anatomy, the few tendons BodyParts3D has.
@@ -91,10 +93,13 @@ const lineOf = (p) => Object.keys(LINES).filter(k => inLine(k, p));
 const linesEl = document.getElementById('lines');
 for (const k of Object.keys(LINES)) { const o = document.createElement('option'); o.value = k; o.textContent = k; linesEl.appendChild(o); }
 // Switching sets reloads the page: the buffers are rebuilt from scratch either way.
-for (const b of document.querySelectorAll('#sets [data-atlas]')) {
-  b.classList.toggle('on', SET === b.dataset.atlas);
-  b.onclick = () => { const q = new URLSearchParams(location.search); if (b.dataset.atlas) q.set('atlas', b.dataset.atlas); else q.delete('atlas'); location.search = q.toString(); };
-}
+const setsEl = document.getElementById('sets');
+setsEl.value = SET;
+setsEl.onchange = () => {
+  const q = new URLSearchParams(location.search);
+  if (setsEl.value) q.set('atlas', setsEl.value); else q.delete('atlas');
+  location.search = q.toString();
+};
 
 const hud = document.getElementById('hud');
 const pickEl = document.getElementById('pick');
