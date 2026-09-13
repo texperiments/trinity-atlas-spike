@@ -78,12 +78,12 @@
 </div>
 <div id="layers" class="row">
   <button id="panelBtn">☰ Systems</button>
-  <select id="sets"><option value="za">Model: joints, fascia &amp; muscles</option><option value="">Model: organs, vessels &amp; nerves</option><option value="za-lite">Model: joints &amp; fascia (light)</option></select>
+  <select id="sets"><option value="za">Model: joints, fascia &amp; muscles</option><option value="za-nv">Model: joints, muscles, nerves &amp; vessels (test)</option><option value="">Model: organs, vessels &amp; nerves</option><option value="za-lite">Model: joints &amp; fascia (light)</option></select>
   <select id="lines"><option value="">Myofascial lines…</option></select>
 </div>
 <div id="pick">
   <div id="pickBody"><div id="pickName">Tap a structure</div><div id="pickSub" hidden></div></div>
-  <div id="pickActions" hidden><button id="iso">Isolate</button><button id="pickClear">Clear</button></div>
+  <div id="pickActions" hidden><button id="iso">Isolate</button><button id="near" hidden>Nearby</button><button id="pickClear">Clear</button></div>
 </div>
 <div id="credit">Anatomy: <a href="https://github.com/Z-Anatomy" target="_blank">Z-Anatomy</a> (CC BY-SA 4.0), derived from <a href="https://dbarchive.biosciencedbc.jp/en/bodyparts3d/" target="_blank">BodyParts3D</a> (The Database Center for Life Science, CC BY 4.0). Adapted for the Trinity atlas spike.</div>
 </div>
@@ -162,6 +162,7 @@ const pickNameEl = document.getElementById('pickName');
 const pickSubEl = document.getElementById('pickSub');
 const pickActionsEl = document.getElementById('pickActions');
 const isoEl = document.getElementById('iso');
+const nearEl = document.getElementById('near');
 /**
  * The selection card. Toma could not find how to isolate a structure: the button was a small
  * word at the end of a diagnostics line. Now a tap puts the name in large type with Isolate and
@@ -181,6 +182,7 @@ function setPick(name, sub) {
   pickActionsEl.hidden = false;
 }
 document.getElementById('pickClear').onclick = () => {
+  if (nearClear) nearClear();
   clearIsolate();
   if (typeof clearSelection === 'function') clearSelection();
   pickNameEl.textContent = 'Tap a structure';
@@ -191,6 +193,7 @@ document.getElementById('pickClear').onclick = () => {
 let isoRef = null;                       // set once the uniform exists
 let clearSelection = null;               // set once the selection uniform exists
 let ghostSync = null;                    // set once the ghost mesh exists
+let nearClear = null;                    // set once the nearby view exists
 const isolating = () => !!isoRef && isoRef.value > -0.5;
 function clearIsolate() {
   if (isoRef) isoRef.value = -1;
@@ -270,6 +273,11 @@ async function main(){
 
   const atlas = await (await fetch(BASE+'atlas.json')).json();
   const parts = atlas.parts.filter(p => KEEP.has(p.system));
+  // What runs past what, measured surface to surface by the export (za-nv only). Absent elsewhere.
+  let NEAR = null;
+  try { const r = await fetch(BASE + 'neighbors.json'); if (r.ok) NEAR = await r.json(); } catch (e) { NEAR = null; }
+  const indexById = new Map(parts.map((p, i) => [p.id, i]));
+  const NEAR_MM = (atlas.neighbors && atlas.neighbors.withinMm) || 5;
 
   // Sizes are known up front, so chunks are decoded one at a time and released.
   // Peak memory is one decompressed chunk plus the merged buffers, not all twelve.
@@ -360,9 +368,10 @@ async function main(){
         .replace('#include <color_fragment>',
           '#include <color_fragment>\n diffuseColor.rgb = ' + slotChain('uCol') + ';')
         .replace('#include <dithering_fragment>',
-          '#include <dithering_fragment>\n if (uLine > 0.5 && vT < 0.5 && vS > 0.5) discard; if (uLine > 0.5) gl_FragColor.rgb = vT > 0.5 ? mix(gl_FragColor.rgb, vec3(0.42,0.52,0.90), 0.8) : gl_FragColor.rgb * 0.55;\n if (abs(vP-uSel) < 0.5) gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.784,0.945,0.208), 0.75);');
+          '#include <dithering_fragment>\n if (uLine > 0.5 && vT < 0.5 && vS > 0.5) discard; if (uLine > 0.5 && uLine < 1.5) gl_FragColor.rgb = vT > 0.5 ? mix(gl_FragColor.rgb, vec3(0.42,0.52,0.90), 0.8) : gl_FragColor.rgb * 0.55;\n if (abs(vP-uSel) < 0.5) gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.784,0.945,0.208), 0.75);');
   };
   linesEl.onchange = () => {
+    if (nearClear) nearClear();
     const k = linesEl.value;
     uLine.value = k ? 1 : 0; linesEl.classList.toggle('on', !!k);
     tint.fill(0);
@@ -371,6 +380,30 @@ async function main(){
     tintAttr.needsUpdate = true;
     uSel.value = -1;
     if (k) setPick(k, n + ' structures, shown over the skeleton'); else setPick(null);
+  };
+  /**
+   * Nearby: the structures a nerve or vessel runs past, or the nerves and vessels that run past a
+   * muscle, bone or ligament, from neighbors.json. Reuses the line tint in a second mode: tinted
+   * parts and the skeleton stay, everything else is dropped, and each keeps its own colour.
+   */
+  let nearOn = false;
+  const nearList = (i) => (NEAR && NEAR[parts[i].id]) || [];
+  nearClear = () => {
+    if (!nearOn) return;
+    nearOn = false; uLine.value = linesEl.value ? 1 : 0; tint.fill(0); tintAttr.needsUpdate = true;
+    nearEl.classList.remove('on'); nearEl.textContent = 'Nearby';
+  };
+  nearEl.onclick = () => {
+    if (nearOn) { nearClear(); return; }
+    const i = uSel.value; if (i < 0) return;
+    linesEl.value = ''; linesEl.classList.remove('on'); clearIsolate();
+    tint.fill(0);
+    const mark = (k) => { tint.fill(255, vstart[k], vstart[k] + parts[k].vertexCount); show[SLOT[parts[k].system]] = 1; };
+    mark(i);
+    for (const [id] of nearList(i)) { const k = indexById.get(id); if (k !== undefined) mark(k); }
+    tintAttr.needsUpdate = true; uLine.value = 2; nearOn = true;
+    nearEl.classList.add('on'); nearEl.textContent = 'Everything';
+    applyLayers();
   };
   /**
    * The parts each system holds, counted once. The panel shows them because "Arteries 639" is the
@@ -414,7 +447,7 @@ async function main(){
     const hint = document.getElementById('modelHint');
     const text = document.getElementById('modelHintText');
     const sw = document.getElementById('modelSwitch');
-    if (SET) { text.textContent = 'Heart, arteries, veins, nerves and organs are in the other model.'; sw.onclick = () => { setsEl.value = ''; setsEl.onchange(); }; }
+    if (SET) { text.textContent = SET === 'za-nv' ? 'Organs and the heart are in the other model.' : 'Heart, arteries, veins, nerves and organs are in the other model.'; sw.onclick = () => { setsEl.value = ''; setsEl.onchange(); }; }
     else { text.textContent = 'Joint ligaments, menisci, discs and fascia are in the other model.'; sw.onclick = () => { setsEl.value = 'za'; setsEl.onchange(); }; }
     hint.hidden = false;
   }
@@ -525,6 +558,8 @@ async function main(){
     for (let i=0;i<parts.length;i++) {
       if (uIso.value > -0.5) { if (i !== uIso.value) continue; }
       else if (!show[SLOT[parts[i].system]] || (lineK && SLOT[parts[i].system] !== 0 && !inLine(lineK, parts[i]))) continue;
+      // In the nearby view only the tinted parts and the skeleton are drawn.
+      else if (nearOn && SLOT[parts[i].system] !== 0 && !tint[vstart[i]]) continue;
       if (ray.ray.intersectsBox(boxes[i])) cand.push(i);
     }
     let best = null;
@@ -534,6 +569,39 @@ async function main(){
       if (h && (!best || h.distance < best.d)) best = { d:h.distance, i };
     }
     g.setDrawRange(0, Infinity);
+    /**
+     * Nerves and vessels are 1 mm tubes in Z-Anatomy, about a pixel wide at the normal zoom, so an exact
+     * hit is luck and a finger never manages it (measured 2026-09-13: 3 px off missed two of three).
+     * A tap within TAP_PX of a visible tube takes the nearest one, as long as it lies on or in front of the
+     * surface the tap hit (2 mm): a vein behind a muscle must not take a tap on the muscle.
+     */
+    const TAP_PX = 14;
+    const tubeSlots = new Set([SLOT.arterial, SLOT.venous, SLOT.nervous]);
+    const isTube = (k) => tubeSlots.has(SLOT[parts[k].system]);
+    // Only over bone or empty space. With muscles shown, the cutaneous nerves and superficial veins lie
+    // on top of them and took half of forty random taps on the thigh (2026-09-13); a tap on a muscle
+    // names the muscle unless it lands on the tube itself.
+    if (!best || SLOT[parts[best.i].system] === SLOT.skeletal) {
+      const pxWorld = 2 * Math.tan(cam.fov * Math.PI / 360) / innerHeight;
+      const v3 = new THREE.Vector3();
+      let close = null;
+      for (let i = 0; i < parts.length; i++) {
+        if (!isTube(i)) continue;
+        if (uIso.value > -0.5) { if (i !== uIso.value) continue; }
+        else if (!show[SLOT[parts[i].system]] || (lineK && !inLine(lineK, parts[i])) || (nearOn && !tint[vstart[i]])) continue;
+        const depth = boxes[i].getCenter(v3).distanceTo(cam.position);
+        const grown = boxes[i].clone().expandByScalar(TAP_PX * pxWorld * depth);
+        if (!ray.ray.intersectsBox(grown)) continue;
+        for (let v = vstart[i]; v < vstart[i] + parts[i].vertexCount; v++) {
+          v3.set(pos[v * 3], pos[v * 3 + 1], pos[v * 3 + 2]);
+          const d = v3.distanceTo(cam.position);
+          v3.project(cam);
+          const px = Math.hypot((v3.x + 1) / 2 * innerWidth - x, (1 - v3.y) / 2 * innerHeight - y);
+          if (px <= TAP_PX && (!close || px < close.px) && (!best || d <= best.d + 0.002)) close = { px, i, d };
+        }
+      }
+      if (close) best = { d: close.d, i: close.i };
+    }
     const ms = Math.round(performance.now()-t);
     lastPickStat = `${cand.length} boxes · ${ms} ms`;
     if (!best){ if (!isolating()) uSel.value = -1; setPick(null); hudLine(); return; }
@@ -542,7 +610,12 @@ async function main(){
     const ln = lineOf(p);
     const sysName = slotLabel(SLOT[p.system]) || p.system;
     const side = p.side === 'l' ? 'left' : p.side === 'r' ? 'right' : '';
-    setPick(p.name, [sysName, side, ln.length ? '<span style="color:#8DA2F0">' + ln.join(', ') + '</span>' : ''].filter(Boolean).join(' · '));
+    const nl = nearList(best.i);
+    const nearText = nl.length
+      ? '<br><span style="color:#D8B565">Within ' + NEAR_MM + ' mm:</span> ' + nl.slice(0, 10).map(([id, mm]) => { const k = indexById.get(id); return (k === undefined ? id : parts[k].name) + ' ' + mm; }).join(', ') + (nl.length > 10 ? ' … +' + (nl.length - 10) : '')
+      : '';
+    setPick(p.name, [sysName, side, ln.length ? '<span style="color:#8DA2F0">' + ln.join(', ') + '</span>' : ''].filter(Boolean).join(' · ') + nearText);
+    nearEl.hidden = !nl.length;
     hudLine();
   }
 
@@ -567,7 +640,7 @@ async function main(){
       (lastPickStat ? `
 last tap: ${lastPickStat}` : '');
   }
-  window.__spike = { renderer, scene, cam, mesh, g, parts, ray, pick, place,
+  window.__spike = { renderer, scene, cam, mesh, g, parts, ray, pick, place, NEAR, indexById, uSel, nearEl, show, applyLayers,
     get dist(){return dist}, set dist(v){dist=v; place();},
     bench(n){ // raw render cost, independent of requestAnimationFrame throttling
       const gl = renderer.getContext();
